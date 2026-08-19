@@ -73,6 +73,12 @@ class setting_idpmetadata extends admin_setting_configtextarea {
     public function validate($value) {
         $value = trim($value);
         if (empty($value)) {
+            // If the metadata is being cleared then any IdP entities previously created from
+            // it are now orphaned. Remove them, otherwise they are still reported as active
+            // IdPs while no metadata configuration exists to describe them.
+            if (!empty($this->get_setting())) {
+                $this->remove_all_idps();
+            }
             return true;
         }
 
@@ -191,6 +197,21 @@ class setting_idpmetadata extends admin_setting_configtextarea {
             $newidp->companyid = $this->companyid;
 
             $DB->insert_record('auth_iomadsaml2_idps', $newidp);
+        }
+    }
+
+    /**
+     * Remove every IdP entity belonging to this configuration scope.
+     *
+     * Used when the metadata configuration is emptied, as the entities are
+     * derived from it and are meaningless without it.
+     */
+    private function remove_all_idps() {
+        global $DB;
+
+        $conditions = ['companyid' => $this->companyid];
+        if ($DB->record_exists('auth_iomadsaml2_idps', $conditions)) {
+            $DB->delete_records('auth_iomadsaml2_idps', $conditions);
         }
     }
 

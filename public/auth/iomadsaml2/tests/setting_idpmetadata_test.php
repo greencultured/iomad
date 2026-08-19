@@ -123,6 +123,50 @@ class setting_idpmetadata_test extends advanced_testcase {
         self::assertTrue(self::$config->validate("\n \n"), 'Should trim newlines.');
     }
 
+    /**
+     * The IdP entities are derived from the metadata, so they go when it is cleared.
+     */
+    public function test_it_removes_the_idps_when_the_metadata_is_cleared(): void {
+        global $DB;
+
+        $this->resetAfterTest();
+
+        $xml = file_get_contents(__DIR__ . '/fixtures/metadata.xml');
+        self::$config->write_setting($xml);
+        self::assertTrue($DB->record_exists('auth_iomadsaml2_idps', ['companyid' => 0]));
+
+        // The IdP entities are created from the metadata, so clearing the metadata has to
+        // take them with it. Otherwise they are left behind as active IdPs which no
+        // metadata configuration describes.
+        self::$config->write_setting('');
+
+        self::assertSame('', get_config('auth_iomadsaml2', 'idpmetadata'));
+        self::assertFalse($DB->record_exists('auth_iomadsaml2_idps', ['companyid' => 0]));
+    }
+
+    /**
+     * Only the IdP entities of the scope being cleared are removed.
+     */
+    public function test_it_keeps_the_idps_of_other_companies_when_the_metadata_is_cleared(): void {
+        global $DB;
+
+        $this->resetAfterTest();
+
+        $xml = file_get_contents(__DIR__ . '/fixtures/metadata.xml');
+        self::$config->write_setting($xml);
+
+        // An IdP belonging to a company is configured by the company settings, not by this one.
+        $companyidp = $DB->get_record('auth_iomadsaml2_idps', ['companyid' => 0]);
+        unset($companyidp->id);
+        $companyidp->companyid = 42;
+        $companyidpid = $DB->insert_record('auth_iomadsaml2_idps', $companyidp);
+
+        self::$config->write_setting('');
+
+        self::assertFalse($DB->record_exists('auth_iomadsaml2_idps', ['companyid' => 0]));
+        self::assertTrue($DB->record_exists('auth_iomadsaml2_idps', ['id' => $companyidpid]));
+    }
+
     public function test_it_gets_idp_data_for_xml() {
         $xml = file_get_contents(__DIR__ . '/fixtures/metadata.xml');
         $data = self::$config->get_idps_data($xml);

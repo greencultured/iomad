@@ -425,5 +425,56 @@ function xmldb_auth_iomadsaml2_upgrade($oldversion) {
         upgrade_plugin_savepoint(true, 2024090901, 'auth', 'iomadsaml2');
     }
 
+    if ($oldversion < 2024090951) {
+        // The company level IdP metadata was not saved into the plugin config, even though the
+        // IdP entities were created from it. That left those entities with no metadata
+        // configuration to be matched against, so they were skipped when building the IdP list
+        // ("Missing IdP metadata configuration for ..."). Rebuild the missing configuration for
+        // any company that still has IdP entities but no metadata setting of its own.
+        $companyids = $DB->get_fieldset_sql("SELECT DISTINCT companyid
+                                               FROM {auth_iomadsaml2_idps}
+                                              WHERE companyid > 0");
+
+        foreach ($companyids as $upgradecompanyid) {
+            $configname = 'idpmetadata_' . $upgradecompanyid;
+            if (!empty(get_config('auth_iomadsaml2', $configname))) {
+                // The company already has its metadata, there is nothing to repair.
+                continue;
+            }
+
+            $metadataurls = $DB->get_fieldset_sql("SELECT DISTINCT metadataurl
+                                                     FROM {auth_iomadsaml2_idps}
+                                                    WHERE companyid = ?", [$upgradecompanyid]);
+
+            if ($metadataurls == ['xml']) {
+                // The metadata was pasted in as XML rather than given as a URL, so the only copy
+                // of it left is the file which was written out when it was saved.
+                $directory = "{$CFG->dataroot}/iomadsaml2";
+                $files = ["{$directory}/" . md5('xml') . "_{$upgradecompanyid}.idp.xml",
+                          "{$directory}/" . md5('xml') . ".idp.xml"];
+                $metadata = '';
+                foreach ($files as $file) {
+                    if (file_exists($file)) {
+                        $metadata = file_get_contents($file);
+                        break;
+                    }
+                }
+            } else {
+                // Anything which is not a URL cannot be turned back into a setting value.
+                $metadataurls = array_filter($metadataurls, function($metadataurl) {
+                    return preg_match('#^https?://#', $metadataurl);
+                });
+                $metadata = implode("\n", $metadataurls);
+            }
+
+            if (!empty($metadata)) {
+                set_config($configname, $metadata, 'auth_iomadsaml2');
+            }
+        }
+
+        // Iomadsaml2 savepoint reached.
+        upgrade_plugin_savepoint(true, 2024090951, 'auth', 'iomadsaml2');
+    }
+
     return true;
 }

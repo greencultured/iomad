@@ -127,7 +127,15 @@ class auth extends \auth_plugin_base {
         global $CFG, $DB;
 
         // IOMAD
+        // A negative companyid means we have no company context at all (e.g. a
+        // logged out visitor), which is the same scope as the site wide config.
+        // Normalise it so that the config we read and the IdP entities we load
+        // below always come from the same scope, otherwise the two disagree and
+        // the IdP list can not be built.
         $companyid = iomad::get_my_companyid(\context_system::instance(), false);
+        if ($companyid < 0) {
+            $companyid = 0;
+        }
         $postfix = '';
         if ($companyid > 0) {
             $postfix = "_$companyid";
@@ -305,7 +313,7 @@ class auth extends \auth_plugin_base {
         foreach ($this->metadataentities as $idp) {
             // Check for unlikely case that entity metadataurl is no longer in configuration.
             if (!array_key_exists($idp->metadataurl, $idpurls)) {
-                debugging("Missing IdP metadata configuration for '{$idp->metadataurl}'");
+                debugging("Missing IdP metadata configuration for '{$idp->metadataurl}'", DEBUG_DEVELOPER);
                 continue;
             }
 

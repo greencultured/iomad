@@ -500,6 +500,11 @@ class company_iomadsaml2_form extends moodleform {
             } catch (setting_idpmetadata_exception $exception) {
                 $errors[$idpmetadata] = get_string('idpmetadata_invalid', 'auth_iomadsaml2');
             }
+        } else if (!empty(get_config('auth_iomadsaml2', $idpmetadata))) {
+            // If the metadata is being cleared then any IdP entities previously created from
+            // it are now orphaned. Remove them, otherwise they are still reported as active
+            // IdPs for the company while no metadata configuration describes them.
+            $this->remove_all_idps();
         }
 
         return $errors;
@@ -610,6 +615,21 @@ class company_iomadsaml2_form extends moodleform {
             $newidp->companyid = $companyid;
 
             $DB->insert_record('auth_iomadsaml2_idps', $newidp);
+        }
+    }
+
+    /**
+     * Remove every IdP entity belonging to this company.
+     *
+     * Used when the company metadata configuration is emptied, as the entities
+     * are derived from it and are meaningless without it.
+     */
+    private function remove_all_idps() {
+        global $DB, $companyid;
+
+        $conditions = ['companyid' => $companyid];
+        if ($DB->record_exists('auth_iomadsaml2_idps', $conditions)) {
+            $DB->delete_records('auth_iomadsaml2_idps', $conditions);
         }
     }
 
