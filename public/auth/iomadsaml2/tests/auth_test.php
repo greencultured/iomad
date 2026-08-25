@@ -1561,4 +1561,80 @@ class auth_iomadsaml2_test extends \advanced_testcase {
         $this->assertEquals('single_value', $user->alternatename);
         $this->assertEquals('running|jumping|knitting', $user->specialities);
     }
+
+    /**
+     * A company setting of "0" is a real choice and has to win over the site wide value.
+     *
+     * Every "off" option in this plugin is stored as "0", so discarding those left a
+     * company unable to turn anything off.
+     */
+    public function test_company_config_keeps_a_zero_setting(): void {
+        $config = auth::company_config([
+            'anyauth' => '1',
+            'anyauth_529' => '0',
+            'duallogin' => '1',
+            'duallogin_529' => '0',
+        ], '_529');
+
+        $this->assertSame('0', $config['anyauth']);
+        $this->assertSame('0', $config['duallogin']);
+    }
+
+    /**
+     * An unset or empty company setting falls back to the site wide value.
+     */
+    public function test_company_config_falls_back_when_not_set_for_the_company(): void {
+        $config = auth::company_config([
+            'idpattr' => 'uid',
+            'mdlattr' => 'username',
+            'mdlattr_529' => '',
+            'alterlogout_529' => null,
+        ], '_529');
+
+        $this->assertArrayNotHasKey('idpattr', $config, 'no company row, so nothing to map');
+        $this->assertArrayNotHasKey('mdlattr', $config, 'empty string falls back');
+        $this->assertArrayNotHasKey('alterlogout', $config, 'null falls back');
+    }
+
+    /**
+     * Company settings that are absent from self::$defaults are mapped too.
+     *
+     * These are written per company by the company settings form but used to be read
+     * from the site wide scope, so a company could not set them at all.
+     */
+    public function test_company_config_maps_settings_outside_the_defaults(): void {
+        $config = auth::company_config([
+            'spentityid' => '',
+            'spentityid_529' => 'https://tenant.example.com/auth/iomadsaml2/sp/metadata.php',
+            'assertionsconsumerservices_529' => 'urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST',
+            'wantassertionssigned_529' => '1',
+            'nameidpolicy_529' => 'urn:oasis:names:tc:SAML:2.0:nameid-format:transient',
+        ], '_529');
+
+        $this->assertSame('https://tenant.example.com/auth/iomadsaml2/sp/metadata.php', $config['spentityid']);
+        $this->assertSame('urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST', $config['assertionsconsumerservices']);
+        $this->assertSame('1', $config['wantassertionssigned']);
+        $this->assertSame('urn:oasis:names:tc:SAML:2.0:nameid-format:transient', $config['nameidpolicy']);
+    }
+
+    /**
+     * Another company's settings are never picked up.
+     */
+    public function test_company_config_ignores_other_scopes(): void {
+        $config = auth::company_config([
+            'idpname' => 'Site wide IdP',
+            'idpname_527' => 'Someone else',
+            'idpname_5290' => 'Not this company either',
+            'idpname_529' => 'Ours',
+        ], '_529');
+
+        $this->assertSame(['idpname' => 'Ours'], $config);
+    }
+
+    /**
+     * With no company context there is nothing to map.
+     */
+    public function test_company_config_is_empty_without_a_postfix(): void {
+        $this->assertSame([], auth::company_config(['anyauth' => '1', 'anyauth_529' => '0'], ''));
+    }
 }

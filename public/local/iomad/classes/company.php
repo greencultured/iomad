@@ -5060,7 +5060,7 @@ class company {
                 if (!empty($user->$fieldname)) {
                     if ($department = $DB->get_record(
                         'local_iomad_company_departments',
-                        ['name' => $user->$fieldname, 'companyid' => $this->id])) {
+                        ['id' => $user->$fieldname, 'companyid' => $this->id])) {
                         $departmentid = $department->id;
                     }
                 }

@@ -453,18 +453,29 @@ class iomad_company_admin {
      * @return string
      */
     public static function process_company_iomadsaml2_form(object $data): string {
-        global $postfix;
+        global $DB, $companyid, $postfix;
 
         // Remove unwanted fields.
         unset($data->action);
         unset($data->submitbutton);
         $idpmetadata = 'idpmetadata' . $postfix;
-        unset($data->$idpmetadata);
+
+        // The metadata is stored as typed in, the IdP entities created from it while
+        // validating are matched back against it when the IdP list is built.
+        if (isset($data->$idpmetadata)) {
+            $data->$idpmetadata = trim($data->$idpmetadata);
+        }
 
         // Are we resetting everything?
         if (!empty($data->resetbutton)) {
             foreach ($data as $id => $value) {
                 unset_config($id, 'auth_iomadsaml2');
+            }
+
+            // The IdP entities are derived from the metadata configuration we have
+            // just removed, so they have to go with it.
+            if ($DB->record_exists('auth_iomadsaml2_idps', ['companyid' => $companyid])) {
+                $DB->delete_records('auth_iomadsaml2_idps', ['companyid' => $companyid]);
             }
             auth_iomadsaml2_update_sp_metadata();
             return get_string('companysaml2settingsresetok', 'block_iomad_company_admin');

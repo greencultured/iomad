@@ -127,7 +127,15 @@ class auth extends \auth_plugin_base {
         global $CFG, $DB;
 
         // IOMAD
+        // A negative companyid means we have no company context at all (e.g. a
+        // logged out visitor), which is the same scope as the site wide config.
+        // Normalise it so that the config we read and the IdP entities we load
+        // below always come from the same scope, otherwise the two disagree and
+        // the IdP list can not be built.
         $companyid = iomad::get_my_companyid(\context_system::instance(), false);
+        if ($companyid < 0) {
+            $companyid = 0;
+        }
         $postfix = '';
         if ($companyid > 0) {
             $postfix = "_$companyid";
@@ -152,12 +160,8 @@ class auth extends \auth_plugin_base {
         $fullconfig = (array) get_config('auth_iomadsaml2');
         $myconfig = array_merge($this->defaults, $fullconfig );
         // Do we have anything company specific?
-        if (!empty($companyid)) {
-            foreach ($this->defaults as $defaultidetifier => $ignore) {
-                if (!empty($fullconfig[$defaultidetifier . $postfix])) {
-                    $myconfig[$defaultidetifier] = $fullconfig[$defaultidetifier . $postfix];
-                }
-            }
+        if ($companyid > 0) {
+            $myconfig = array_merge($myconfig, self::company_config($fullconfig, $postfix));
         }
 
         // Convert it to an object as that's what they expect.
@@ -183,6 +187,55 @@ class auth extends \auth_plugin_base {
         // Check if we have mutiple IdPs configured.
         // If we have mutliple metadata entries set multiidp to true.
         $this->multiidp = (count($this->metadataentities) > 1);
+    }
+
+    /**
+     * IOMAD
+     * Pick a company's settings out of the plugin configuration.
+     *
+     * Company settings are stored alongside the site wide ones as "<name><postfix>",
+     * so this maps them back onto their base names. Two things it deliberately does
+     * not do:
+     *
+     * - It does not restrict itself to the keys in self::$defaults. Settings such as
+     *   spentityid, assertionsconsumerservices, nameidpolicy, authncontext,
+     *   signaturealgorithm, wantassertionssigned and requestedattributes are written
+     *   per company by the company settings form but are absent from the defaults, so
+     *   limiting the mapping to that list left them reading the site wide value.
+     * - It does not test the value with empty(). A company setting of "0" is a real
+     *   choice - every "off" option in this plugin is stored as "0" - and empty()
+     *   would silently discard it and use the site wide setting instead. Only an
+     *   unset, false or empty string value falls back, which is the same rule
+     *   local_iomad\iomad::get_config() applies.
+     *
+     * @param array $fullconfig All of the plugin configuration, keyed by setting name.
+     * @param string $postfix The company postfix, e.g. "_529".
+     * @return array The company settings, keyed by their base setting name.
+     */
+    public static function company_config(array $fullconfig, string $postfix): array {
+        if ($postfix === '') {
+            return [];
+        }
+
+        $companyconfig = [];
+        $postfixlength = strlen($postfix);
+        foreach ($fullconfig as $name => $value) {
+            if (substr($name, -$postfixlength) !== $postfix) {
+                // Belongs to the site wide scope, or to another company.
+                continue;
+            }
+            $basename = substr($name, 0, -$postfixlength);
+            if ($basename === '') {
+                continue;
+            }
+            if ($value === false || $value === null || $value === '') {
+                // Not set for this company, so the site wide setting stands.
+                continue;
+            }
+            $companyconfig[$basename] = $value;
+        }
+
+        return $companyconfig;
     }
 
     /**
@@ -305,7 +358,7 @@ class auth extends \auth_plugin_base {
         foreach ($this->metadataentities as $idp) {
             // Check for unlikely case that entity metadataurl is no longer in configuration.
             if (!array_key_exists($idp->metadataurl, $idpurls)) {
-                debugging("Missing IdP metadata configuration for '{$idp->metadataurl}'");
+                debugging("Missing IdP metadata configuration for '{$idp->metadataurl}'", DEBUG_DEVELOPER);
                 continue;
             }
 
