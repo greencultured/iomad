@@ -254,4 +254,112 @@ final class company_management_test extends advanced_testcase {
                                                  'companyid' => $newcompany->id,
                                                  'departmentid' => $departmentid]));
     }
+
+    /**
+     * Build a per-company department menu profile field holding department ids.
+     *
+     * @param company $company
+     * @param array $departmentids ids to offer, first one becomes the default
+     * @return int the new user_info_field id
+     */
+    private function create_department_menu(company $company, array $departmentids): int {
+        global $DB;
+
+        $categoryid = $DB->insert_record('user_info_category',
+            (object) ['name' => $company->get_shortname(), 'sortorder' => 1]);
+        $DB->set_field('local_iomad_companies', 'profilecategoryid', $categoryid,
+            ['id' => $company->get('id')]);
+
+        return (int) $DB->insert_record('user_info_field', (object) [
+            'shortname' => $company->get_shortname() . 'department',
+            'name' => 'Department',
+            'datatype' => 'menu',
+            'categoryid' => $categoryid,
+            'sortorder' => 1,
+            'required' => 0,
+            'locked' => 0,
+            'visible' => 2,
+            'forceunique' => 0,
+            'signup' => 0,
+            'defaultdata' => (string) reset($departmentids),
+            'param1' => implode("\n", $departmentids),
+        ]);
+    }
+
+    /**
+     * A department menu storing department ids resolves to that department.
+     */
+    public function test_get_auto_department_resolves_a_department_id(): void {
+        global $DB;
+
+        $this->resetAfterTest();
+        $generator = $this->getDataGenerator()->get_plugin_generator('local_iomad');
+
+        $company = $generator->create_company();
+        $topnode = company::get_company_parentnode($company->get('id'));
+        $departmentid = $generator->create_department((object) ['companyid' => $company->get('id')]);
+
+        $fieldid = $this->create_department_menu($company, [$topnode->id, $departmentid]);
+        $DB->set_field('local_iomad_companies', 'departmentprofileid', $fieldid,
+            ['id' => $company->get('id')]);
+
+        $userid = $generator->create_iomad_user([], $company->get('id'));
+        $DB->insert_record('user_info_data',
+            (object) ['userid' => $userid, 'fieldid' => $fieldid, 'data' => (string) $departmentid,
+                      'dataformat' => 0]);
+
+        // Reload so the company record picks up departmentprofileid.
+        $company = new company($company->get('id'));
+        $user = $DB->get_record('user', ['id' => $userid]);
+
+        $this->assertEquals($departmentid, $company->get_auto_department($user));
+    }
+
+    /**
+     * A value naming another company's department is ignored.
+     */
+    public function test_get_auto_department_ignores_another_companys_department(): void {
+        global $DB;
+
+        $this->resetAfterTest();
+        $generator = $this->getDataGenerator()->get_plugin_generator('local_iomad');
+
+        $company = $generator->create_company();
+        $othercompany = $generator->create_company();
+        $topnode = company::get_company_parentnode($company->get('id'));
+        $foreignid = $generator->create_department((object) ['companyid' => $othercompany->get('id')]);
+
+        $fieldid = $this->create_department_menu($company, [$topnode->id]);
+        $DB->set_field('local_iomad_companies', 'departmentprofileid', $fieldid,
+            ['id' => $company->get('id')]);
+
+        $userid = $generator->create_iomad_user([], $company->get('id'));
+        $DB->insert_record('user_info_data',
+            (object) ['userid' => $userid, 'fieldid' => $fieldid, 'data' => (string) $foreignid,
+                      'dataformat' => 0]);
+
+        $company = new company($company->get('id'));
+        $user = $DB->get_record('user', ['id' => $userid]);
+
+        $this->assertEquals($topnode->id, $company->get_auto_department($user));
+    }
+
+    /**
+     * With no department profile field configured the top node is returned.
+     */
+    public function test_get_auto_department_falls_back_to_the_top_node(): void {
+        global $DB;
+
+        $this->resetAfterTest();
+        $generator = $this->getDataGenerator()->get_plugin_generator('local_iomad');
+
+        $company = $generator->create_company();
+        $topnode = company::get_company_parentnode($company->get('id'));
+        $generator->create_department((object) ['companyid' => $company->get('id')]);
+
+        $userid = $generator->create_iomad_user([], $company->get('id'));
+        $user = $DB->get_record('user', ['id' => $userid]);
+
+        $this->assertEquals($topnode->id, $company->get_auto_department($user));
+    }
 }
