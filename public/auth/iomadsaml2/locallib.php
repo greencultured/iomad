@@ -146,42 +146,42 @@ function auth_iomadsaml2_get_sp_metadata($baseurl = '') {
         $metaArray20['NameIDFormat'] = $format;
     }
 
-    $name = $spconfig->getOptionalLocalizedString('name', null);
-    $attributes = $spconfig->getOptionalArray('attributes', []);
+    $name = $spconfig->getLocalizedString('name', NULL);
+    $attributes = $spconfig->getArray('attributes', array());
 
     if ($name !== NULL && !empty($attributes)) {
         $metaArray20['name'] = $name;
         $metaArray20['attributes'] = $attributes;
-        $metaArray20['attributes.required'] = $spconfig->getOptionalArray('attributes.required', []);
+        $metaArray20['attributes.required'] = $spconfig->getArray('attributes.required', array());
 
         if (empty($metaArray20['attributes.required'])) {
             unset($metaArray20['attributes.required']);
         }
 
-        $description = $spconfig->getOptionalArray('description', null);
+        $description = $spconfig->getArray('description', NULL);
         if ($description !== NULL) {
             $metaArray20['description'] = $description;
         }
 
-        $nameFormat = $spconfig->getOptionalString('attributes.NameFormat', null);
+        $nameFormat = $spconfig->getString('attributes.NameFormat', NULL);
         if ($nameFormat !== NULL) {
             $metaArray20['attributes.NameFormat'] = $nameFormat;
         }
     }
 
     // add organization info
-    $orgName = $spconfig->getOptionalLocalizedString('OrganizationName', null);
+    $orgName = $spconfig->getLocalizedString('OrganizationName', NULL);
     if ($orgName !== NULL) {
         $metaArray20['OrganizationName'] = $orgName;
 
-        $metaArray20['OrganizationDisplayName'] = $spconfig->getOptionalLocalizedString('OrganizationDisplayName', null);
+        $metaArray20['OrganizationDisplayName'] = $spconfig->getLocalizedString('OrganizationDisplayName', NULL);
         if ($metaArray20['OrganizationDisplayName'] === NULL) {
             $metaArray20['OrganizationDisplayName'] = $orgName;
         }
 
-        $metaArray20['OrganizationURL'] = $spconfig->getOptionalLocalizedString('OrganizationURL', null);
+        $metaArray20['OrganizationURL'] = $spconfig->getLocalizedString('OrganizationURL', NULL);
         if ($metaArray20['OrganizationURL'] === NULL) {
-            throw new \SimpleSAML\Error\Exception('If OrganizationName is set, OrganizationURL must also be set.');
+            throw new SimpleSAML_Error_Exception('If OrganizationName is set, OrganizationURL must also be set.');
         }
     }
 
@@ -193,10 +193,10 @@ function auth_iomadsaml2_get_sp_metadata($baseurl = '') {
     }
 
     // add technical contact
-    $email = $config->getOptionalString('technicalcontact_email', 'na@example.org');
+    $email = $config->getString('technicalcontact_email', 'na@example.org', FALSE);
     if ($email && $email !== 'na@example.org') {
         $techcontact['emailAddress'] = $email;
-        $techcontact['name'] = $config->getOptionalString('technicalcontact_name', null);
+        $techcontact['name'] = $config->getString('technicalcontact_name', NULL);
         $techcontact['contactType'] = 'technical';
         $metaArray20['contacts'][] = \SimpleSAML\Utils\Config\Metadata::getContact($techcontact);
     }
