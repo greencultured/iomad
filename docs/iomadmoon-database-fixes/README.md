@@ -46,6 +46,7 @@ that ships with Moodle.
 | `08-lastresort-switch-theme-to-iomadboost.sql` | yes | Last resort only: switches site, companies, users, courses, categories and cohorts from `iomadmoon` to `iomadboost`. Refuses to run if `iomadboost` is not installed. Back up first. |
 | `09-rollback-theme-switch.sql` | yes | Reverses script 08. |
 | `10-optional-hide-primary-nav-nodes.sql` | yes | Plain-value workaround: hides `home`, `myhome`, `courses` from the top-bar navigation so no active item is left to move on everyday pages. Does not cover Site administration or IOMAD Company dashboard pages. |
+| `11-align-plugin-version-after-file-restore.sql` | yes | After the theme files are put back to the vendor build: aligns `theme_iomadmoon/version` with the restored `version.php`, bumps cache revisions so the old JavaScript bundle stops being served, clears leftover whitespace in `additionalhtmlfooter`. See section 9. |
 
 ## 4. Procedure
 
@@ -245,3 +246,61 @@ company edit form (Company details > Theme).
   `$CFG->custommenuitems`, overridden by the company row's `custommenuitems`.
 * `local/iomad/classes/company.php`, `update_theme()`: copies the company
   theme into `mdl_user.theme` (`allowuserthemes = 1`).
+
+## 9. After the theme files were put back to the vendor build
+
+Observed on 2026-09-04 around 06:00 UTC: the theme directory on the server
+changed between two diagnostic runs.
+
+| File | Before | After |
+|---|---|---|
+| `amd/src/loader.js` | 5706 bytes, 2026-08-27 | 3822 bytes, 2025-02-15 |
+| `amd/build/loader.min.js` | 2092 bytes, 2026-08-27 | 3106 bytes, 2025-02-15 |
+| `amd/src/bs4-compat.js` | 6577 bytes, 2025-12-02 | absent |
+| `amd/src/index.js` | 943 bytes, 2025-05-09 | 939 bytes, 2025-02-13 |
+
+The vendor's loader, read from `loader.min.js.map` (`sourcesContent`),
+contains no `bs4-compat`, `Bs4Compat` or `data-bs-toggle` and four
+`data-toggle`. That build never renames the attribute core `moremenu.js`
+looks up, so the `moveIntoMoreDropdown` cause is gone from the code. The
+later build (Bootstrap 5 files plus the compat shim, dated 2025-12-02, and
+the loader rewrite of 2026-08-27) was a server-side change, not the vendor's
+release. Whoever restored the files did the right thing; the database now
+has to follow, which is script 11.
+
+Why three rows matter:
+
+1. `theme_iomadmoon/version` was written by the replaced `version.php`
+   (`2026041805.01`). With a lower version on disk Moodle flags a plugin
+   downgrade and blocks the upgrade screen. Setting the row to the code's
+   value is Moodle's documented rollback.
+2. Moodle stores a hash of every plugin's `version.php` in
+   `allversionshash`; a changed `version.php` makes `moodle_needs_upgrade()`
+   true until `admin/cli/upgrade.php` recomputes it.
+3. The cached JavaScript bundle is keyed by `jsrev`; until it moves,
+   browsers keep receiving the bundle built from the old loader.
+
+```bash
+cd /var/www/html/moodle
+grep -n 'version\|release' theme/iomadmoon/version.php
+find theme/iomadmoon -type f -newermt 2025-03-01 | head        # leftovers from the later build; expect none
+grep -rl "bs4-compat\|Bs4Compat\|data-bs-toggle" theme/iomadmoon | head   # expect none
+
+CODEVER=$(grep -oP '^\$plugin->version\s*=\s*\K[0-9.]+' theme/iomadmoon/version.php)
+mysql --defaults-file=/etc/mysql/debian.cnf --database=iomad --table \
+  --init-command="SET @codeversion='$CODEVER'" < $FIX/11-align-plugin-version-after-file-restore.sql
+sudo -u www-data php admin/cli/upgrade.php --non-interactive
+sudo -u www-data php admin/cli/purge_caches.php
+```
+
+Verification in the browser after a hard reload at a narrow width:
+
+```js
+console.log('old:', document.querySelectorAll('.moremenu [data-toggle="dropdown"]').length,
+            'renamed:', document.querySelectorAll('.moremenu [data-bs-toggle="dropdown"]').length);
+```
+
+Expected `old: 1 renamed: 0` and no error when the bar collapses. If
+`rui.js` was restored as well, the `SpaceTheme already initialized` line is
+gone too; if it remains, the `find` above lists which later-build files are
+still present.
