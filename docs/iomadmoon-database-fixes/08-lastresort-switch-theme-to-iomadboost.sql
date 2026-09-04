@@ -1,5 +1,5 @@
 -- =====================================================================
--- theme_iomadmoon database fixes: 06-optional-switch-theme-to-iomadboost.sql
+-- theme_iomadmoon database fixes: 08-lastresort-switch-theme-to-iomadboost.sql
 -- ---------------------------------------------------------------------
 -- OPTIONAL BYPASS for the browser error
 --   TypeError: Cannot read properties of null (reading 'classList')
@@ -18,7 +18,7 @@
 -- theme_iomadmoon: switch the site, every IOMAD company, and every row
 -- that pins the theme to the parent theme iomadboost until the theme's
 -- JavaScript is fixed. This changes the site's look. BACK UP FIRST
--- (README, step 0). Reverse with 07-rollback-theme-switch.sql.
+-- (README, step 0). Reverse with 09-rollback-theme-switch.sql.
 --
 -- Afterwards (README):  purge caches AND kill sessions, because
 -- $USER->theme is held in each logged-in session.

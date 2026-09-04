@@ -1,7 +1,7 @@
 -- =====================================================================
--- theme_iomadmoon database fixes: 07-rollback-theme-switch.sql
+-- theme_iomadmoon database fixes: 09-rollback-theme-switch.sql
 -- ---------------------------------------------------------------------
--- Reverses 06-optional-switch-theme-to-iomadboost.sql.
+-- Reverses 08-lastresort-switch-theme-to-iomadboost.sql.
 --
 -- Exact only if, before the switch, no row was already 'iomadboost'
 -- (check the 01-verify.sql snapshot taken before step 06: user_theme,
