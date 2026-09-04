@@ -109,3 +109,14 @@ SELECT name, OCTET_LENGTH(COALESCE(value, '')) AS bytes, value
 FROM mdl_config
 WHERE name IN ('custommenuitems', 'langmenu', 'navfilter', 'stringfilters', 'commerce_admin_enableall')
 ORDER BY name;
+
+-- 9. Other rows that can pin a theme (resolve_theme() order:
+--    course, category, session, user, cohort, site).
+SELECT 'mdl_course' AS source, theme, COUNT(*) AS rows_pinned
+FROM mdl_course WHERE theme <> '' GROUP BY theme
+UNION ALL
+SELECT 'mdl_course_categories', theme, COUNT(*)
+FROM mdl_course_categories WHERE theme <> '' GROUP BY theme
+UNION ALL
+SELECT 'mdl_cohort', theme, COUNT(*)
+FROM mdl_cohort WHERE theme <> '' GROUP BY theme;

@@ -13,7 +13,7 @@ that ships with Moodle.
 |---|---|---|
 | Console warning `SpaceTheme already initialized` | `theme/iomadmoon/amd/src/rui.js` calls `SpaceTheme.init()` itself on document-ready (line 1553), and all 12 layout files call `js_call_amd('theme_iomadmoon/rui', 'init')` again. The second call hits the guard and logs. | None. No injected script in `additionalhtml*`, `additionalheadscripts` or `googleanalytics` (all 0 bytes) and no config row references the loader. |
 | `amd/src/rui.js` (2026-09-04) newer than `amd/build/rui.min.js` (2026-09-01), different SHA-256 | Build was not regenerated after the source edit. | `cachejs = 1` means the stale build is what browsers get. |
-| Console error `TypeError: Cannot read properties of null (reading 'classList') at moveIntoMoreDropdown (core/first.js)` | `core/moremenu.js` collapses the primary navigation when it wraps to a second line; for each moved `<li>` it does `navNode.querySelector('.nav-link').classList`. One `<li>` in the menu has no `.nav-link` descendant. | The only menu items stored in the database are custom menu items: `mdl_config.custommenuitems` (site) and the companies table column `custommenuitems` (per company, overrides the site value). |
+| Console error `TypeError: Cannot read properties of null (reading 'classList') at moveIntoMoreDropdown (core/first.js:94:2028)` | The null is `dropdownToggle`, not the nav link (every `<li>` has a `.nav-link`, the served bundle already guards `navLink`, and column 2028 is `dropdownToggle.classList`). Core `moremenu.js` finds the "More" toggle with `[data-toggle="dropdown"]`; the theme's `amd/src/bs4-compat.js` has already renamed that attribute to `data-bs-toggle`. It throws the moment an *active* item overflows into "More". | None. No settings row changes that JavaScript. Custom menu items (`mdl_config.custommenuitems`, company `custommenuitems`) are not involved; the site value was already empty. |
 | Fonts | `fontbody = 'Poppins', sans-serif`, weights 400/500/700, `googlefonturl` loads exactly those weights. `fontheadings` is empty, so the SCSS default applies. No font-size setting exists in the database (`$font-size-base: 1rem` is SCSS). | Consistent. Only `fontheadings` is optionally settable. |
 | Caches | `jsrev = themerev = 1788497399` (2026-09-04 04:36 UTC), i.e. purged after the source edit. | Fine. |
 
@@ -24,9 +24,12 @@ that ships with Moodle.
   `js_call_amd` calls to go. The warning is harmless: the guard prevents an
   actual double initialisation.
 * It cannot rebuild `amd/build/rui.min.js`; only Grunt does that.
-* It cannot add a missing `.nav-link` to a `<li>` that the theme's templates
-  render. If script 06 finds nothing to clear, the offending item is template
-  markup.
+* It cannot stop `bs4-compat.js` from renaming `data-toggle` to
+  `data-bs-toggle`, and it cannot make core `moremenu.js` look for the new
+  name. The fix is one line of theme JavaScript (skip `.moremenu` toggles in
+  `bs4-compat.js`) or a core selector change, both outside this runbook's
+  rule. The only database-level bypass is to stop serving the theme
+  (script 06).
 * It cannot change the base font size.
 
 ## 3. Files
@@ -38,7 +41,8 @@ that ships with Moodle.
 | `03-optional-serve-source-js.sql` | yes | `cachejs = 0`: serve `amd/src/rui.js` instead of the stale build. Costs performance. |
 | `04-optional-fontheadings.sql` | yes | Sets `theme_iomadmoon/fontheadings` to Poppins. Only if headings render in the wrong family. |
 | `05-rollback.sql` | yes | Restores `cachejs = 1` and empty `fontheadings`, bumps revisions. |
-| `06-optional-clear-custom-menu-items.sql` | yes | Clears site and company custom menu items (the `moveIntoMoreDropdown` error). Back up first. |
+| `06-optional-switch-theme-to-iomadboost.sql` | yes | Bypass for the `moveIntoMoreDropdown` error: switches site, companies, users, courses, categories and cohorts from `iomadmoon` to `iomadboost`. Refuses to run if `iomadboost` is not installed. Back up first. |
+| `07-rollback-theme-switch.sql` | yes | Reverses script 06. |
 
 ## 4. Procedure
 
@@ -82,7 +86,7 @@ $DB --table < $FIX/01-verify.sql
 
 ```bash
 $DB --table < $FIX/02-apply-cache-purge.sql          # always
-$DB --table < $FIX/06-optional-clear-custom-menu-items.sql   # if step 1 shows custom menu items
+$DB --table < $FIX/06-optional-switch-theme-to-iomadboost.sql   # only as the bypass in section 5
 $DB --table < $FIX/03-optional-serve-source-js.sql   # only if the 2026-09-04 rui.js edit must go live
 $DB --table < $FIX/04-optional-fontheadings.sql      # only if headings show the wrong font
 ```
@@ -109,26 +113,67 @@ Site administration > Development > Purge caches.
   `/lib/requirejs.php/<jsrev>/core/first.js`; with `cachejs = 0` it is
   `/lib/requirejs.php/-1/core/first.js` and `rui.js` comes from `amd/src`.
 * The `SpaceTheme already initialized` warning is expected to remain (section 2).
-* The `moveIntoMoreDropdown` error disappears only if the item without
-  `.nav-link` came from the custom menu. To see which `<li>` it is, read it
-  from the rendered page without changing anything (browser console):
+* The `moveIntoMoreDropdown` error is unchanged by anything above except the
+  theme switch in section 5. Confirm the cause without changing anything
+  (browser console, on a page that shows the error):
 
   ```js
-  document.querySelectorAll('.moremenu > li').forEach(li => {
-    if (!li.querySelector('.nav-link')) console.log(li.outerHTML);
-  });
+  console.log('old attr:', document.querySelectorAll('.moremenu [data-toggle="dropdown"]').length,
+              'renamed:', document.querySelectorAll('.moremenu [data-bs-toggle="dropdown"]').length);
   ```
+
+  `old attr: 0` with `renamed: 1` or more is the failure condition.
 
 ### Rollback
 
 ```bash
 $DB --table < $FIX/05-rollback.sql
-$DB < /root/backup-companies-<stamp>.sql      # only if 06 was run
-$DB < /root/backup-mdl_config-<stamp>.sql     # only if custommenuitems must come back
+$DB --table < $FIX/07-rollback-theme-switch.sql   # only if 06 was run
 sudo -u www-data php admin/cli/purge_caches.php
+sudo -u www-data php admin/cli/kill_all_sessions.php   # only if 06 or 07 was run
 ```
 
-## 5. Conditional: developer debugging and the warning
+## 5. The `moveIntoMoreDropdown` error: what the database can and cannot do
+
+Mechanism, from the files on the server and the served bundle:
+
+1. `lib/templates/moremenu.mustache` and the theme's
+   `templates/core/course-moremenu.mustache` render the "More" toggle with
+   `data-toggle="dropdown"` (this core is Bootstrap 4).
+2. `theme/iomadmoon/amd/src/loader.js` runs `Bs4Compat.init(document)`;
+   `bs4-compat.js` sets `data-bs-toggle` and removes `data-toggle` on every
+   `[data-toggle="dropdown"]`.
+3. `lib/amd/src/moremenu.js` keeps `dropdowntoggle: '[data-toggle="dropdown"]'`,
+   so `dropdownToggle` is `null` after step 2.
+4. `moveIntoMoreDropdown()` only touches `dropdownToggle` when the item being
+   moved is active. So the error appears when a menu wraps (window resize,
+   medium widths, course pages with many secondary tabs) and the active item
+   is pushed into "More".
+
+Consequences for a database-only rule:
+
+* **No settings row changes this.** Custom menu items were a wrong lead: the
+  site value was already empty, and clearing a company's value shortens its
+  menu but does not remove the null. If the earlier revision's script 06
+  (clear custom menu items) was run, restore the company backup from step 0:
+  `$DB < /root/backup-companies-<stamp>.sql`, then purge caches.
+* **Partial mitigation:** fewer primary-navigation items means fewer wraps.
+  `theme_iomadmoon/hidenodesprimarynavigation` (currently `home`) hides
+  nodes; the accepted names are in the theme's settings and language files:
+  `grep -rn -A4 hidenodesprimarynavigation theme/iomadmoon/settings theme/iomadmoon/lang/en`.
+  This does nothing for the secondary (course) navigation.
+* **Bypass:** script 06 switches every theme-pinning row from `iomadmoon` to
+  the parent theme `iomadboost`, which does not load `bs4-compat.js`. Then:
+
+  ```bash
+  sudo -u www-data php admin/cli/purge_caches.php
+  sudo -u www-data php admin/cli/kill_all_sessions.php   # $USER->theme lives in the session
+  ```
+
+  Users log in again and get `iomadboost`. Reverse with script 07 plus the
+  same two commands.
+
+## 6. Conditional: developer debugging and the warning
 
 If the `Logger` object in `rui.js` only prints when Moodle's developer
 debugging is on, production debug levels hide the warning. Check without
@@ -147,21 +192,21 @@ UPDATE mdl_config SET value = '0' WHERE name IN ('debug', 'debugdisplay');
 
 followed by step 3.
 
-## 6. Same changes through Moodle's own CLI instead of SQL
+## 7. Same changes through Moodle's own CLI instead of SQL
 
 `admin/cli/cfg.php` writes the same rows through `set_config()` and
 invalidates the cache itself, so step 3 is not needed for these:
 
 ```bash
 sudo -u www-data php admin/cli/cfg.php --name=cachejs --set=0
-sudo -u www-data php admin/cli/cfg.php --name=custommenuitems --set=
+sudo -u www-data php admin/cli/cfg.php --name=theme --set=iomadboost   # site level only; companies and users need script 06
 sudo -u www-data php admin/cli/cfg.php --component=theme_iomadmoon --name=fontheadings --set="'Poppins', sans-serif"
 ```
 
-Per-company custom menu items have no CLI; use script 06 or the company
-edit form (Company details > Custom menu items).
+Per-company and per-user theme rows have no CLI; use script 06 or the
+company edit form (Company details > Theme).
 
-## 7. Reference: where the behaviour comes from (Moodle core, unchanged)
+## 8. Reference: where the behaviour comes from (Moodle core, unchanged)
 
 * `lib/classes/output/requirements/page_requirements_manager.php`,
   `get_jsrev()`: `cachejs` empty gives revision `-1`.
@@ -173,7 +218,11 @@ edit form (Company details > Custom menu items).
 * `lib/moodlelib.php`, `purge_other_caches()`: sets `localcachedirpurged`;
   `lib/setuplib.php`, `make_localcache_directory()`: wipes localcache when
   `.lastpurged` is older than that value.
-* `lib/amd/src/moremenu.js`: `autoCollapse()` and `moveIntoMoreDropdown()`.
+* `lib/amd/src/moremenu.js`: `autoCollapse()`, `moveIntoMoreDropdown()`,
+  `Selectors.attributes.dropdowntoggle = '[data-toggle="dropdown"]'`.
+* `lib/pagelib.php`, `resolve_theme()`: order course, category, session,
+  user, cohort, site; `$USER->theme` is the session copy, hence
+  `admin/cli/kill_all_sessions.php` after a database theme switch.
 * `lib/classes/navigation/output/primary.php`, `get_custom_menu()`:
   `$CFG->custommenuitems`, overridden by the company row's `custommenuitems`.
 * `local/iomad/classes/company.php`, `update_theme()`: copies the company
