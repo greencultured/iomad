@@ -45,6 +45,7 @@ that ships with Moodle.
 | `07-remove-moremenu-toggle-additionalhtml.sql` | yes | Removes exactly the block that 06 added. |
 | `08-lastresort-switch-theme-to-iomadboost.sql` | yes | Last resort only: switches site, companies, users, courses, categories and cohorts from `iomadmoon` to `iomadboost`. Refuses to run if `iomadboost` is not installed. Back up first. |
 | `09-rollback-theme-switch.sql` | yes | Reverses script 08. |
+| `10-optional-hide-primary-nav-nodes.sql` | yes | Plain-value workaround: hides `home`, `myhome`, `courses` from the top-bar navigation so no active item is left to move on everyday pages. Does not cover Site administration or IOMAD Company dashboard pages. |
 
 ## 4. Procedure
 
@@ -175,9 +176,16 @@ Consequences for a database-only rule:
   this theme. Purge caches afterwards (the row is read through the config
   cache). It is JavaScript, but it lives in a database row and no file
   changes. Remove with script 07.
-* **Partial mitigation only:** `theme_iomadmoon/hidenodesprimarynavigation`
-  (a multi-checkbox stored comma-separated, currently `home`) shortens the
-  primary navigation; it does nothing for course tabs.
+* **Plain-value workaround (script 10):** `theme_iomadmoon/hidenodesprimarynavigation`
+  (a multi-checkbox stored comma-separated; the theme accepts only `home`,
+  `myhome`, `courses`) removes those nodes from the top bar. Because core
+  only dereferences the null toggle for the *active* item, hiding the nodes
+  that are active on everyday pages makes the crash impossible there.
+  "Site administration" and IOMAD's "Company dashboard" (`ioaddashboardnode`)
+  cannot be hidden this way, so the error can still fire on `/admin/*` and
+  `/blocks/iomad_company_admin/*` pages when the bar wraps. Applied on the
+  live site on 2026-09-04 with the value `home,myhome,courses,siteadminnode`
+  (the last key is ignored). Revert to `home`.
 * **Last resort (script 08):** switching every theme pin to `iomadboost`,
   which does not load `bs4-compat.js`, then purge caches and
   `admin/cli/kill_all_sessions.php` (`$USER->theme` lives in the session).
