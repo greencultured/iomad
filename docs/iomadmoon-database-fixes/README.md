@@ -268,12 +268,26 @@ the loader rewrite of 2026-08-27) was a server-side change, not the vendor's
 release. Whoever restored the files did the right thing; the database now
 has to follow, which is script 11.
 
-Why three rows matter:
+Result of running this on 2026-09-04 (06:09 UTC):
 
-1. `theme_iomadmoon/version` was written by the replaced `version.php`
-   (`2026041805.01`). With a lower version on disk Moodle flags a plugin
-   downgrade and blocks the upgrade screen. Setting the row to the code's
-   value is Moodle's documented rollback.
+| Check | Output | Meaning |
+|---|---|---|
+| `version.php` on disk | `2026041805.01`, release `v1.8.0 for 4.5` | The restored build carries the same version number the database already held, so script 11 changed nothing there and there is no downgrade. |
+| `admin/cli/upgrade.php --non-interactive` | `No upgrade needed for the installed version 4.5.13` | `allversionshash` matches the files on disk. |
+| `jsrev`, `themerev`, `templaterev`, `localcachedirpurged` | all `1788502163`, moved again by `purge_caches.php` | Browsers get new bundle URLs; every web node wipes its local cache on its next request (see section 10). |
+| `find -newermt 2025-03-01` | lists `settings/*.php` from 2026 | Expected: the v1.8.0 release itself is from 2026. File dates do not tell the vendor build from the later one; the presence of `amd/src/bs4-compat.js` and `data-bs-toggle` in `amd/` or `templates/` does. |
+
+The `find | head` line stopped the block from finishing: `head` exits after
+its lines, `find` keeps walking until it next writes, and a large tree (a
+`node_modules` left behind by a development build, for instance) makes that
+a long wait. The bounded commands below replace it.
+
+Why the rows matter:
+
+1. `theme_iomadmoon/version` must equal `$plugin->version` in `version.php`.
+   With a lower number on disk Moodle flags a plugin downgrade and blocks
+   the upgrade screen; setting the row to the code's value is Moodle's
+   documented rollback. Equal numbers, as observed, mean nothing to do.
 2. Moodle stores a hash of every plugin's `version.php` in
    `allversionshash`; a changed `version.php` makes `moodle_needs_upgrade()`
    true until `admin/cli/upgrade.php` recomputes it.
@@ -283,8 +297,10 @@ Why three rows matter:
 ```bash
 cd /var/www/html/moodle
 grep -n 'version\|release' theme/iomadmoon/version.php
-find theme/iomadmoon -type f -newermt 2025-03-01 | head        # leftovers from the later build; expect none
-grep -rl "bs4-compat\|Bs4Compat\|data-bs-toggle" theme/iomadmoon | head   # expect none
+# Later-build leftovers where they matter (served JS and templates); exit=1 means none found.
+timeout 60 grep -rIl --exclude-dir=node_modules -e 'bs4-compat' -e 'Bs4Compat' -e 'data-bs-toggle' \
+  theme/iomadmoon/amd theme/iomadmoon/templates 2>/dev/null; echo "shim refs on host exit=$?"
+ls -la theme/iomadmoon/amd/src/loader.js theme/iomadmoon/amd/src/bs4-compat.js 2>&1
 
 CODEVER=$(grep -oP '^\$plugin->version\s*=\s*\K[0-9.]+' theme/iomadmoon/version.php)
 mysql --defaults-file=/etc/mysql/debian.cnf --database=iomad --table \
@@ -302,5 +318,74 @@ console.log('old:', document.querySelectorAll('.moremenu [data-toggle="dropdown"
 
 Expected `old: 1 renamed: 0` and no error when the bar collapses. If
 `rui.js` was restored as well, the `SpaceTheme already initialized` line is
-gone too; if it remains, the `find` above lists which later-build files are
-still present.
+gone too; if it remains, `ls -la theme/iomadmoon/amd/src/rui.js` shows
+whether the later build's `rui.js` (2026 date, `SpaceTheme.init()` on
+document-ready) is still in place.
+
+## 10. When the site runs in containers (podman, one compose file)
+
+The site was moved to podman containers (six containers, one compose file,
+one env file per container). That changes which copy of the files the
+browser gets and which cache directories a purge reaches, so three
+read-only checks come first. None of them changes a file or a row.
+
+What the database rows do across containers: `make_localcache_directory()`
+(`lib/setuplib.php`) compares the mtime of `localcache/.lastpurged` with
+`localcachedirpurged` on every request and wipes that node's local cache
+directory when the row is newer. So the row set by script 02/11 or by
+`purge_caches.php` reaches every web container on its own, including the
+`localcache/requirejs/` bundles. The `core/config` MUC cache, however, lives
+in `$CFG->cachedir` (`moodledata/cache` by default): a purge run on the host
+only empties it for a container that shares that moodledata directory.
+
+```bash
+# 1. Which container serves the site, and what it mounts.
+podman ps --format '{{.Names}}\t{{.Image}}\t{{.Ports}}'
+for c in $(podman ps --format '{{.Names}}'); do
+  echo "== $c mounts:"
+  podman inspect "$c" --format '{{range .Mounts}}{{.Type}} {{.Source}} -> {{.Destination}}{{"\n"}}{{end}}'
+done
+
+# 2. The theme files each container actually has.
+for c in $(podman ps --format '{{.Names}}'); do
+  podman exec "$c" sh -c '
+    for d in /var/www/html/moodle /var/www/html /var/www/moodle /app /bitnami/moodle /opt/moodle; do
+      [ -f "$d/theme/iomadmoon/version.php" ] || continue
+      echo "== '"$c"': moodle code at $d"
+      grep -o "version = [0-9.]*" "$d/theme/iomadmoon/version.php"
+      ls -la "$d/theme/iomadmoon/amd/src/loader.js" "$d/theme/iomadmoon/amd/src/bs4-compat.js" 2>&1
+      echo "data-bs-toggle in built loader: $(grep -c data-bs-toggle "$d/theme/iomadmoon/amd/build/loader.min.js")"
+    done' 2>/dev/null
+done
+
+# 3. What the site serves, independent of where the files are.
+SITE=https://learn.greencultured.co
+JSREV=$(mysql --defaults-file=/etc/mysql/debian.cnf iomad -N -e "SELECT value FROM mdl_config WHERE name='jsrev'")
+CACHEJS=$(mysql --defaults-file=/etc/mysql/debian.cnf iomad -N -e "SELECT value FROM mdl_config WHERE name='cachejs'")
+echo "db jsrev=$JSREV cachejs=$CACHEJS"
+echo "jsrev in served pages: $(curl -s $SITE/login/index.php | grep -o 'requirejs.php/[-0-9]*' | sort -u | tr '\n' ' ')"
+if [ "$CACHEJS" = "0" ]; then URL="$SITE/lib/requirejs.php/-1/theme_iomadmoon/loader.js"; else URL="$SITE/lib/requirejs.php/$JSREV/core/first.js"; fi
+curl -s "$URL" -o /root/served.js; ls -la /root/served.js
+echo "shim markers in served JS:"; grep -o 'theme_iomadmoon/bs4-compat\|data-bs-toggle' /root/served.js | sort | uniq -c
+```
+
+Reading the output:
+
+- **Served pages carry the database `jsrev`** and the served JS has no
+  `bs4-compat` / `data-bs-toggle`: the site delivers the vendor build. The
+  rename that nulled the "More" toggle cannot happen; the console check in
+  section 9 should show `old: 1 renamed: 0`. An error that still appears is
+  a browser holding the old bundle: hard reload, and confirm in the Network
+  tab that `requirejs.php` is fetched with the new number.
+- **Served pages carry an older `jsrev`** than the database: the web
+  container reads `core/config` from a cache the host purge did not reach
+  (its moodledata is a different volume). Run the purge where that cache is:
+  `podman exec <web container> php <path>/admin/cli/purge_caches.php`.
+  That is a cache operation, not a code change.
+- **Served JS still contains the shim** while the host directory is clean:
+  the container serves its own copy of the code (step 1 shows no bind mount
+  of `/var/www/html/moodle`, or a mount from another path). No database row
+  selects which files a container serves; the vendor build has to be present
+  at the path the container mounts, the same restore that was done on the
+  host, followed by the section 9 alignment. Until then, the only database
+  measures are the ones in section 5.
