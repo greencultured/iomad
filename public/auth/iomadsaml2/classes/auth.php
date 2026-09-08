@@ -111,7 +111,19 @@ class auth extends \auth_plugin_base {
         'flagresponsetype'   => iomadsaml2_settings::OPTION_FLAGGED_LOGIN_MESSAGE,
         'flagredirecturl'    => '',
         'flagmessage'        => '', // Set in constructor.
-        'tempdir'            => '/tmp/simplesaml'
+        'tempdir'            => '/tmp/simplesaml',
+        'allowcreate'                 => 0,
+        'attrsimple'                  => 1,
+        'attemptsignout'              => 1,
+        'noredirectips'               => '',
+        'grouprules'                  => '',
+        'requestedattributes'         => '',
+        'spentityid'                  => '',
+        'nameidpolicy'                => '',
+        'signaturealgorithm'          => '',
+        'wantassertionssigned'        => 0,
+        'assertionsconsumerservices'  => '',
+        'authncontext'                => '',
     ];
 
     /**
@@ -154,7 +166,9 @@ class auth extends \auth_plugin_base {
         // Do we have anything company specific?
         if (!empty($companyid)) {
             foreach ($this->defaults as $defaultidetifier => $ignore) {
-                if (!empty($fullconfig[$defaultidetifier . $postfix])) {
+                // Use array_key_exists rather than !empty() so a company override explicitly
+                // set to '0' or '' is still honoured instead of silently falling back to base.
+                if (array_key_exists($defaultidetifier . $postfix, $fullconfig)) {
                     $myconfig[$defaultidetifier] = $fullconfig[$defaultidetifier . $postfix];
                 }
             }
@@ -1045,13 +1059,25 @@ class auth extends \auth_plugin_base {
         $mapconfig = get_config('auth_iomadsaml2');
         $allkeys = array_keys(get_object_vars($mapconfig));
         $update = false;
+        $processedfields = [];
 
         foreach ($allkeys as $key) {
             if (preg_match('/^field_updatelocal_(.+)$/', $key, $match)) {
                 $field = $match[1];
-                if (!empty($mapconfig->{'field_map_'.$field})) {
-                    $attr = $mapconfig->{'field_map_'.$field};
-                    $updateonlogin = $mapconfig->{'field_updatelocal_'.$field} === 'onlogin';
+                // Scanning raw config keys can surface bogus pseudo-fields (e.g. "email_529",
+                // from a company-postfixed key matching this generic pattern too) and can
+                // otherwise process the same real field twice (once via its base key, once via
+                // its company-postfixed key). Only process each real, known user field once.
+                if (!in_array($field, $this->userfields) || in_array($field, $processedfields)) {
+                    continue;
+                }
+                $processedfields[] = $field;
+                // Prefer the company-postfixed field_map_{field} value, falling back to the
+                // unpostfixed/base value, so a company override actually takes effect.
+                $attr = $mapconfig->{'field_map_'.$field.$this->postfix} ?? ($mapconfig->{'field_map_'.$field} ?? null);
+                if (!empty($attr)) {
+                    $updateonlogin = ($mapconfig->{'field_updatelocal_'.$field.$this->postfix}
+                        ?? ($mapconfig->{'field_updatelocal_'.$field} ?? null)) === 'onlogin';
 
                     if ($newuser || $updateonlogin) {
                         // Basic error handling, check to see if the attributes exist before mapping the data.
