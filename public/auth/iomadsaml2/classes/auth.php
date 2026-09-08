@@ -454,7 +454,11 @@ class auth extends \auth_plugin_base {
             unset($SESSION->saml);
         }
 
-        $this->loginpage_hook();
+        // Do NOT call loginpage_hook() here. Moodle core's login/index.php calls
+        // loginpage_hook() itself immediately after pre_loginpage_hook(), so calling
+        // it here as well caused should_login_redirect() to run twice per page load,
+        // firing two competing SAML AuthnRequests/states in passive mode and leaving
+        // the user on the manual login page instead of completing the login.
         $this->log(__FUNCTION__ . ' exit');
     }
 
